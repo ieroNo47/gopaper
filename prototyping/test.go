@@ -19,6 +19,18 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
+	testBasicAuth()
+	testXAuth()
+
+}
+
+func testXAuth() error {
+	fmt.Println("== Testing XAuth ==")
+	return nil
+}
+
+func testBasicAuth() error {
+	fmt.Println("== Testing Basic Auth ==")
 	client := &http.Client{}
 	req, _ := http.NewRequest("GET", os.Getenv("IP_API")+"/authenticate", nil)
 
@@ -26,7 +38,7 @@ func main() {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatalf("Error: Failed to verify authentication: %v\n", err)
+		return fmt.Errorf("Error: Failed to verify authentication: %v\n", err)
 	}
 	defer resp.Body.Close()
 
@@ -35,6 +47,7 @@ func main() {
 	if resp.StatusCode == 200 {
 		fmt.Println("Result: Successfully Authenticated")
 	} else {
-		fmt.Println("Result: Failed to authenticate. Check user and password.")
+		return fmt.Errorf("Result: Failed to authenticate. Check user and password.")
 	}
+	return nil
 }
