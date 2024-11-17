@@ -11,7 +11,9 @@ package main
 // IP_OAUTH_CONSUMER_SECRET
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -20,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,9 +37,9 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
-	// if err := testBasicAuth(); err != nil {
-	// 	log.Fatal(err)
-	// }
+	if err := testBasicAuth(); err != nil {
+		log.Fatal(err)
+	}
 	if err := testXAuth(); err != nil {
 		log.Fatal(err)
 	}
@@ -46,14 +49,7 @@ func main() {
 func testXAuth() error {
 	fmt.Println("== Testing XAuth ==")
 	// https://web.archive.org/web/20130308050830/https://dev.twitter.com/docs/oauth/xauth
-	// enc := url.QueryEscape(os.Getenv("IP_API"))
-	// fmt.Printf("%s: %s\n", os.Getenv("IP_API"), enc)
-	// signingKey := os.Getenv("IP_OAUTH_CONSUMER_SECRET") + "&"
-	// h := hmac.New(sha1.New, []byte(signingKey))
-	// h.Write([]byte(enc))
-	// hash := h.Sum(nil)
-	// bhash := base64.StdEncoding.EncodeToString(hash)
-	// fmt.Print(bhash)
+	signingKey := os.Getenv("IP_OAUTH_CONSUMER_SECRET") + "&"
 	method := "POST"
 	nonce, err := generateNonce(32)
 	if err != nil {
@@ -66,23 +62,97 @@ func testXAuth() error {
 	encAccessTokenURL := url.QueryEscape(accessTokenURL)
 	parameters := map[string]string{
 		"oauth_consumer_key":     os.Getenv("IP_OAUTH_CONSUMER_ID"),
-		"oauth_consumer_secret":  os.Getenv("IP_OAUTH_CONSUMER_SECRET"),
 		"oauth_nonce":            nonce,
 		"oauth_signature_method": "HMAC-SHA1",
-		"oauth_timestamp":        string(time.Now().Unix()),
+		"oauth_timestamp":        strconv.Itoa(int(time.Now().Unix())),
 		"oauth_version":          "1.0",
 		"x_auth_mode":            "client_auth",
-		"x_auth_password":        os.Getenv("IP_USER"),
-		"x_auth_username":        os.Getenv("IP_PASSWORD"),
+		"x_auth_password":        os.Getenv("IP_PASSWORD"),
+		"x_auth_username":        os.Getenv("IP_USER"),
 	}
 	encParameters := url.QueryEscape(urlEncodeParameters(parameters))
 	signatureBaseString := fmt.Sprintf("%s&%s&%s", method, encAccessTokenURL, encParameters)
-	fmt.Printf("%s\n", signatureBaseString)
-	// TODO: create body
-	// sign
-	// create oauth header string
-	// make request
+	parameters["oauth_signature"] = generateSignature(signingKey, signatureBaseString)
+	authorizationHeader := getAuthorizationHeader(parameters)
+	// fmt.Printf("%s\n%s\n%s\n", signatureBaseString, parameters["oauth_signature"], authorizationHeader)
+	values := url.Values{}
+	values.Set("x_auth_mode", "client_auth")
+	values.Set("x_auth_password", os.Getenv("IP_PASSWORD"))
+	values.Set("x_auth_username", os.Getenv("IP_USER"))
+	req, err := http.NewRequest("POST", accessTokenURL, strings.NewReader(values.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", authorizationHeader)
+	// requestDump, err := httputil.DumpRequest(req, true)
+	// if err != nil {
+	// 	fmt.Println("Error dumping request:", err)
+	// 	return err
+	// }
+	// fmt.Println(string(requestDump))
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	fmt.Println("Status code: ", resp.StatusCode)
+	fmt.Println("Response: ", string(body))
+	// tokenValues, err := url.ParseQuery(string(body))
+	// if err != nil {
+	// 	return err
+	// }
+
+	// tokenSecret := tokenValues.Get("oauth_token_secret")
+	// token := tokenValues.Get("oauth_token")
+	// config := oauth1.NewConfig(os.Getenv("IP_OAUTH_CONSUMER_ID"), os.Getenv("IP_OAUTH_CONSUMER_SECRET"))
+	// otoken := oauth1.NewToken(token, tokenSecret)
+	// httpClient := config.Client(oauth1.NoContext, otoken)
+	// bookmarksURL := fmt.Sprintf("%s/%s/%s",
+	// 	os.Getenv("IP_API"),
+	// 	os.Getenv("IP_API_VERSION"),
+	// 	"bookmarks/list")
+	// values = url.Values{}
+	// values.Add("limit", "5")
+	// req, err = http.NewRequest("POST", bookmarksURL, strings.NewReader(values.Encode()))
+	// if err != nil {
+	// 	return err
+	// }
+	// resp, err = httpClient.Do(req)
+	// if err != nil {
+	// 	return err
+	// }
+	// defer resp.Body.Close()
+	// fmt.Println("Status code: ", resp.StatusCode)
+	// fmt.Println("Response: ", string(body))
 	return nil
+}
+
+func getAuthorizationHeader(parameters map[string]string) string {
+	headerValue := "OAuth "
+	headerParams := []string{}
+	headerParams = append(headerParams,
+		"oauth_consumer_key"+"="+parameters["oauth_consumer_key"],
+		"oauth_nonce"+"="+parameters["oauth_nonce"],
+		"oauth_signature_method"+"="+parameters["oauth_signature_method"],
+		"oauth_timestamp"+"="+parameters["oauth_timestamp"],
+		"oauth_signature"+"="+parameters["oauth_signature"],
+		"oauth_version"+"="+parameters["oauth_version"],
+	)
+	headerValue += strings.Join(headerParams, ",")
+	return headerValue
+}
+
+func generateSignature(signingKey string, data string) string {
+	h := hmac.New(sha1.New, []byte(signingKey))
+	h.Write([]byte(data))
+	hash := h.Sum(nil)
+	return base64.StdEncoding.EncodeToString(hash)
 }
 
 func urlEncodeParameters(parameters map[string]string) string {
