@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -26,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dghubble/oauth1"
 	"github.com/joho/godotenv"
 )
 
@@ -38,17 +40,18 @@ func main() {
 	}
 
 	if err := testBasicAuth(); err != nil {
-		log.Fatal(err)
+		log.Fatalf("BASIC AUTH FAILED: %v\n", err)
 	}
 	if err := testXAuth(); err != nil {
-		log.Fatal(err)
+		log.Fatalf("XAUTH FAILED: %v\n", err)
 	}
 
 }
 
 func testXAuth() error {
-	fmt.Println("== Testing XAuth ==")
+	fmt.Println("== Testing xAuth ==")
 	// https://web.archive.org/web/20130308050830/https://dev.twitter.com/docs/oauth/xauth
+	fmt.Println(">> Get oAuth token <<")
 	signingKey := os.Getenv("IP_OAUTH_CONSUMER_SECRET") + "&"
 	method := "POST"
 	nonce, err := generateNonce(32)
@@ -103,22 +106,25 @@ func testXAuth() error {
 	}
 	fmt.Println("Status code: ", resp.StatusCode)
 	fmt.Println("Response: ", string(body))
-	// tokenValues, err := url.ParseQuery(string(body))
-	// if err != nil {
-	// 	return err
-	// }
 
-	// tokenSecret := tokenValues.Get("oauth_token_secret")
-	// token := tokenValues.Get("oauth_token")
-	// config := oauth1.NewConfig(os.Getenv("IP_OAUTH_CONSUMER_ID"), os.Getenv("IP_OAUTH_CONSUMER_SECRET"))
-	// otoken := oauth1.NewToken(token, tokenSecret)
-	// httpClient := config.Client(oauth1.NoContext, otoken)
-	// bookmarksURL := fmt.Sprintf("%s/%s/%s",
-	// 	os.Getenv("IP_API"),
-	// 	os.Getenv("IP_API_VERSION"),
-	// 	"bookmarks/list")
-	// values = url.Values{}
-	// values.Add("limit", "5")
+	fmt.Println(">> Make authorized API request <<")
+	tokenValues, err := url.ParseQuery(string(body))
+	if err != nil {
+		return err
+	}
+
+	tokenSecret := tokenValues.Get("oauth_token_secret")
+	token := tokenValues.Get("oauth_token")
+	config := oauth1.NewConfig(os.Getenv("IP_OAUTH_CONSUMER_ID"), os.Getenv("IP_OAUTH_CONSUMER_SECRET"))
+	otoken := oauth1.NewToken(token, tokenSecret)
+	httpClient := config.Client(oauth1.NoContext, otoken)
+	titleLimit := 5
+	bookmarksURL := fmt.Sprintf("%s/%s/%s",
+		os.Getenv("IP_API"),
+		os.Getenv("IP_API_VERSION"),
+		"bookmarks/list")
+	values = url.Values{}
+	values.Add("limit", strconv.Itoa(titleLimit))
 	// req, err = http.NewRequest("POST", bookmarksURL, strings.NewReader(values.Encode()))
 	// if err != nil {
 	// 	return err
@@ -127,9 +133,42 @@ func testXAuth() error {
 	// if err != nil {
 	// 	return err
 	// }
-	// defer resp.Body.Close()
-	// fmt.Println("Status code: ", resp.StatusCode)
-	// fmt.Println("Response: ", string(body))
+	resp, err = httpClient.Post(bookmarksURL,
+		"application/x-www-form-urlencoded",
+		strings.NewReader(values.Encode()),
+	)
+
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	fmt.Println("Status code: ", resp.StatusCode)
+	// body, err = io.ReadAll(resp.Body)
+	// if err != nil {
+	// 	return err
+	// }
+	// fmt.Println("Response body: ", string(body))
+	if resp.StatusCode == 200 {
+		// parse json response
+		var response Response
+		err = json.NewDecoder(resp.Body).Decode(&response)
+		if err != nil {
+			return err
+		}
+		titles := response.getBookmarkTitles()
+		fmt.Printf("%d titles for user '%s':\n", titleLimit, response.User.Username)
+		for _, title := range titles {
+			fmt.Printf("\t- %s\n", title)
+		}
+	} else {
+		body, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return err
+		}
+		fmt.Println("Response body: ", string(body))
+		return fmt.Errorf("failed to make authorized request: %s", string(body))
+	}
 	return nil
 }
 

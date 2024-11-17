@@ -4,6 +4,7 @@ go 1.23.1
 
 require (
 	github.com/charmbracelet/bubbletea v1.2.2
+	github.com/dghubble/oauth1 v0.7.3
 	github.com/joho/godotenv v1.5.1
 )
 
