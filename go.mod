@@ -1,6 +1,6 @@
 module github.com/ieroNo47/gopaper
 
-go 1.23.2
+go 1.23.1
 
 require (
 	github.com/charmbracelet/bubbletea v1.2.2
