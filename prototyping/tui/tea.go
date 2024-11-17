@@ -43,16 +43,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
+			} else if m.cursor == 0 {
+				m.cursor = len(m.choices) - 1
 			}
 		case "down", "j":
 			if m.cursor < len(m.choices)-1 {
 				m.cursor++
+			} else if m.cursor == len(m.choices)-1 {
+				m.cursor = 0
 			}
 		case "enter", " ", "right":
 			if _, ok := m.selected[m.cursor]; ok {
 				delete(m.selected, m.cursor)
 			} else {
 				m.selected[m.cursor] = struct{}{}
+			}
+		case "left":
+			if _, ok := m.selected[m.cursor]; ok {
+				delete(m.selected, m.cursor)
 			}
 		}
 		m.last = msg.String()
