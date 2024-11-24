@@ -156,7 +156,7 @@ func testXAuth() error {
 		if err != nil {
 			return err
 		}
-		titles := response.getBookmarkTitles()
+		titles := response.GetBookmarkTitles()
 		fmt.Printf("%d titles for user '%s':\n", titleLimit, response.User.Username)
 		for _, title := range titles {
 			fmt.Printf("\t- %s\n", title)
