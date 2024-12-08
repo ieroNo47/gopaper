@@ -48,7 +48,7 @@ type User struct {
 	SubscriptionIsActive string `json:"subscription_is_active"`
 }
 
-func (r Response) getBookmarkTitles() []string {
+func (r Response) GetBookmarkTitles() []string {
 	titles := []string{}
 	for _, bookmark := range r.Bookmarks {
 		titles = append(titles, bookmark.Title)
