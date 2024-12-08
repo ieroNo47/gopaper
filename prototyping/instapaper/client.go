@@ -10,9 +10,17 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dghubble/oauth1"
 	"github.com/ieroNo47/gopaper/prototyping/auth/xauth"
+)
+
+const (
+	defaultTimeout  = 10 * time.Second
+	contentType     = "application/x-www-form-urlencoded"
+	bookmarksList   = "bookmarks/list"
+	bookarmsGetText = "bookmarks/get_text"
 )
 
 type Response struct {
@@ -76,40 +84,40 @@ func (r Response) GetBookmarks() []Bookmark {
 
 // Client
 type Client struct {
-	HttpClient *http.Client
+	httpClient *http.Client
+	apiVersion string
+	baseURL    string
 }
 
 func NewClient() (Client, error) {
 	tokenValues, err := xauth.GetToken()
 	if err != nil {
-		return Client{}, err
+		return Client{}, fmt.Errorf("failed to get token: %w", err)
 	}
 
 	tokenSecret := tokenValues.Get("oauth_token_secret")
 	token := tokenValues.Get("oauth_token")
-	config := oauth1.NewConfig(os.Getenv("IP_OAUTH_CONSUMER_ID"), os.Getenv("IP_OAUTH_CONSUMER_SECRET"))
+	config := oauth1.NewConfig(
+		os.Getenv("IP_OAUTH_CONSUMER_ID"),
+		os.Getenv("IP_OAUTH_CONSUMER_SECRET"))
 	otoken := oauth1.NewToken(token, tokenSecret)
 	httpClient := config.Client(oauth1.NoContext, otoken)
-	return Client{HttpClient: httpClient}, nil
+	httpClient.Timeout = defaultTimeout
+	return Client{httpClient: httpClient,
+		apiVersion: os.Getenv("IP_API_VERSION"),
+		baseURL:    os.Getenv("IP_API")}, nil
 }
 
 func (c Client) GetBookmarks(limit int) ([]Bookmark, error) {
 	bookmarksURL := fmt.Sprintf("%s/%s/%s",
-		os.Getenv("IP_API"),
-		os.Getenv("IP_API_VERSION"),
-		"bookmarks/list")
+		c.baseURL,
+		c.apiVersion,
+		bookmarksList)
 	values := url.Values{}
 	values.Add("limit", strconv.Itoa(limit))
-	// req, err = http.NewRequest("POST", bookmarksURL, strings.NewReader(values.Encode()))
-	// if err != nil {
-	// 	return err
-	// }
-	// resp, err = httpClient.Do(req)
-	// if err != nil {
-	// 	return err
-	// }
-	resp, err := c.HttpClient.Post(bookmarksURL,
-		"application/x-www-form-urlencoded",
+
+	resp, err := c.httpClient.Post(bookmarksURL,
+		contentType,
 		strings.NewReader(values.Encode()),
 	)
 
@@ -118,19 +126,12 @@ func (c Client) GetBookmarks(limit int) ([]Bookmark, error) {
 	}
 	defer resp.Body.Close()
 
-	// fmt.Println("Status code: ", resp.StatusCode)
-	// body, err = io.ReadAll(resp.Body)
-	// if err != nil {
-	// 	return err
-	// }
-	// fmt.Println("Response body: ", string(body))
 	if resp.StatusCode != 200 {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}
-
-		return nil, fmt.Errorf("failed to make authorized request: %s", string(body))
+		return nil, fmt.Errorf("failed to get bookmarks list: %s", string(body))
 	}
 
 	// parse json response
