@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	defaultTimeout  = 10 * time.Second
-	contentType     = "application/x-www-form-urlencoded"
-	bookmarksList   = "bookmarks/list"
-	bookarmsGetText = "bookmarks/get_text"
+	defaultTimeout   = 10 * time.Second
+	contentType      = "application/x-www-form-urlencoded"
+	bookmarksList    = "bookmarks/list"
+	bookmarksGetText = "bookmarks/get_text"
 )
 
 type Response struct {
@@ -70,18 +70,6 @@ type User struct {
 	SubscriptionIsActive string `json:"subscription_is_active"`
 }
 
-func (r Response) GetBookmarkTitles() []string {
-	titles := []string{}
-	for _, bookmark := range r.Bookmarks {
-		titles = append(titles, bookmark.Title)
-	}
-	return titles
-}
-
-func (r Response) GetBookmarks() []Bookmark {
-	return r.Bookmarks
-}
-
 // Client
 type Client struct {
 	httpClient *http.Client
@@ -120,7 +108,6 @@ func (c Client) GetBookmarks(limit int) ([]Bookmark, error) {
 		contentType,
 		strings.NewReader(values.Encode()),
 	)
-
 	if err != nil {
 		return nil, err
 	}
@@ -140,8 +127,7 @@ func (c Client) GetBookmarks(limit int) ([]Bookmark, error) {
 	if err != nil {
 		return nil, err
 	}
-	return response.GetBookmarks(), nil
-
+	return response.Bookmarks, nil
 }
 
 func (c Client) GetBookmarkTitles(limit int) ([]string, error) {
@@ -154,4 +140,39 @@ func (c Client) GetBookmarkTitles(limit int) ([]string, error) {
 		titles = append(titles, bookmark.Title)
 	}
 	return titles, nil
+}
+
+func (c Client) GetBookmarkText(bookmarkID int64) (string, error) {
+	bookmarksURL := fmt.Sprintf("%s/%s/%s",
+		c.baseURL,
+		c.apiVersion,
+		bookmarksGetText)
+	values := url.Values{}
+	values.Add("bookmark_id", strconv.Itoa(int(bookmarkID)))
+
+	resp, err := c.httpClient.Post(bookmarksURL,
+		contentType,
+		strings.NewReader(values.Encode()),
+	)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read body: %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("failed to get bookmarks list: %s", string(body))
+	}
+	return string(body), nil
+	// parse json response
+	// var response Response
+	// err = json.NewDecoder(resp.Body).Decode(&response)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// return response.Bookmarks, nil
 }
