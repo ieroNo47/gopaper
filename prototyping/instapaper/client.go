@@ -116,9 +116,9 @@ func (c Client) GetBookmarks(limit int) ([]Bookmark, error) {
 	if resp.StatusCode != 200 {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to read body")
 		}
-		return nil, fmt.Errorf("failed to get bookmarks list: %s", string(body))
+		return nil, fmt.Errorf("failed to get bookmarks list: code: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	// parse json response
