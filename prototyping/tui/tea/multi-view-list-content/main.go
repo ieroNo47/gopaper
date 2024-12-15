@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -63,12 +64,14 @@ var (
 )
 
 type mainModel struct {
-	state   sessionState
-	spinner spinner.Model
-	list    list.Model
-	index   int
-	width   int
-	height  int
+	state    sessionState
+	spinner  spinner.Model
+	list     list.Model
+	viewport viewport.Model
+	ready    bool
+	index    int
+	width    int
+	height   int
 }
 
 func newModel() mainModel {
@@ -119,6 +122,27 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		h, v := docStyle.GetFrameSize()
 		m.list.SetSize(msg.Width-h, msg.Height-v-10)
+		if !m.ready {
+			// Since this program is using the full size of the viewport we
+			// need to wait until we've received the window dimensions before
+			// we can initialize the viewport. The initial dimensions come in
+			// quickly, though asynchronously, which is why we wait for them
+			// here.
+			m.viewport = viewport.New(msg.Width-h-100, msg.Height-v-10)
+			m.viewport.YPosition = v - 10
+			m.viewport.HighPerformanceRendering = false
+			m.viewport.SetContent("Loading...")
+			m.ready = true
+
+			// This is only necessary for high performance rendering, which in
+			// most cases you won't need.
+			//
+			// Render the viewport one line below the header.
+			m.viewport.YPosition = v - 10 + 1
+		} else {
+			m.viewport.Width = msg.Width - h - 100
+			m.viewport.Height = msg.Height - v - 10
+		}
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
@@ -139,8 +163,43 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch m.state {
 		case spinnerView:
-			m.spinner, cmd = m.spinner.Update(msg)
+			// m.spinner, cmd = m.spinner.Update(msg)
+			// cmds = append(cmds, cmd)
+			m.viewport, cmd = m.viewport.Update(msg)
 			cmds = append(cmds, cmd)
+		case listView:
+			m.list, cmd = m.list.Update(msg)
+			cmds = append(cmds, cmd)
+			// get and set the contents of an item
+			if len(m.list.Items()) > 0 {
+				i := m.list.SelectedItem().(item)
+				if len(i.Text()) == 0 {
+					client, err := instapaper.NewClient()
+					if err != nil {
+						log.Fatalf("Failed to init Instapaper client: %v\n", err)
+					}
+
+					text, err := client.GetBookmarkText(i.ID())
+					if err != nil {
+						log.Fatalf("Failed to get item contents: %v\n", err)
+					}
+
+					t, err := html2text.FromString(text)
+					if err != nil {
+						log.Fatalf("Failed to convert html to text: %v\n", err)
+					}
+
+					out, err := glamour.Render(t, "dark")
+					if err != nil {
+						log.Fatalf("Failed to render with glamour: %v\n", err)
+					}
+
+					i.SetText(out)
+					// // is there a better way or we always have to re-set the item if we modify it?
+					m.list.SetItem(m.list.Index(), i)
+				}
+				m.viewport.SetContent(i.Text())
+			}
 		}
 	case spinner.TickMsg:
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -148,9 +207,36 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case initListMsg:
 		cmd = m.list.SetItems(msg)
 		cmds = append(cmds, cmd)
+		if len(m.list.Items()) > 0 {
+			i := m.list.SelectedItem().(item)
+			if len(i.Text()) == 0 {
+				client, err := instapaper.NewClient()
+				if err != nil {
+					log.Fatalf("Failed to init Instapaper client: %v\n", err)
+				}
+
+				text, err := client.GetBookmarkText(i.ID())
+				if err != nil {
+					log.Fatalf("Failed to get item contents: %v\n", err)
+				}
+
+				t, err := html2text.FromString(text)
+				if err != nil {
+					log.Fatalf("Failed to convert html to text: %v\n", err)
+				}
+
+				out, err := glamour.Render(t, "dark")
+				if err != nil {
+					log.Fatalf("Failed to render with glamour: %v\n", err)
+				}
+
+				i.SetText(out)
+				// // is there a better way or we always have to re-set the item if we modify it?
+				m.list.SetItem(m.list.Index(), i)
+			}
+			m.viewport.SetContent(i.Text())
+		}
 	}
-	m.list, cmd = m.list.Update(msg)
-	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
 }
 
@@ -171,34 +257,16 @@ func (m mainModel) View() string {
 	)
 	defaultStyle := modelStyle.Width(m.width/2 - 2).Height(m.height - lipgloss.Height(dummyHelp) - 1)
 	focusedStyle := focusedModelStyle.Width(m.width/2 - 2).Height(m.height - lipgloss.Height(dummyHelp) - 1)
-	rightText := m.spinner.View()
-	if len(m.list.Items()) > 0 {
-		i := m.list.SelectedItem().(item)
-		// rightText = m.list.Title
-		// rightText = i.Title()
-		if len(i.Text()) == 0 {
-			client, err := instapaper.NewClient()
-			if err != nil {
-				log.Fatalf("Failed to init Instapaper client: %v\n", err)
-			}
-			text, err := client.GetBookmarkText(i.ID())
-			if err != nil {
-				log.Fatalf("Failed to get item contents: %v\n", err)
-			}
-			t, err := html2text.FromString(text)
-			if err != nil {
-				log.Fatalf("Failed to convert html to text: %v\n", err)
-			}
-			out, err := glamour.Render(t, "dark")
-			if err != nil {
-				log.Fatalf("Failed to render with glamour: %v\n", err)
-			}
-			i.SetText(out[:100])
-		}
-
-		rightText = i.Text()
-
-	}
+	// rightText := m.spinner.View()
+	// if len(m.list.Items()) > 0 {
+	// 	i := m.list.SelectedItem().(item)
+	// 	// rightText = m.list.Title
+	// 	// rightText = i.Title()
+	// 	if len(i.Text()) > 0 {
+	// 		rightText = i.Text()
+	// 	}
+	// }
+	rightText := m.viewport.View()
 
 	if m.state == listView {
 		s += lipgloss.JoinHorizontal(
@@ -210,7 +278,7 @@ func (m mainModel) View() string {
 		s += lipgloss.JoinHorizontal(
 			lipgloss.Top,
 			defaultStyle.Render(m.list.View()),
-			focusedStyle.Render(m.spinner.View()),
+			focusedStyle.Render(rightText),
 		)
 	}
 	helpRender := helpStyle.Render(
