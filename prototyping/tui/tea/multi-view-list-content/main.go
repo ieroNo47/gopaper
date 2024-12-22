@@ -36,7 +36,7 @@ type sessionState uint
 
 const (
 	listView sessionState = iota
-	spinnerView
+	textView
 	width  = 20
 	height = 10
 )
@@ -58,9 +58,9 @@ var (
 		Align(lipgloss.Center, lipgloss.Center).
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color("69"))
-	spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
-	helpStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	docStyle     = lipgloss.NewStyle().Margin(1, 2) // list
+	// spinnerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
+	helpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	docStyle  = lipgloss.NewStyle().Margin(1, 2) // list
 )
 
 type mainModel struct {
@@ -79,6 +79,7 @@ func newModel() mainModel {
 	m.spinner = spinner.New()
 	m.list = list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	m.list.Title = "My Instapaper list"
+	m.list.SetShowHelp(false)
 	return m
 }
 
@@ -108,6 +109,41 @@ func initList() tea.Cmd {
 
 }
 
+type content struct {
+	index int
+	item  item
+}
+type contentMsg content
+
+func setContent(index int, item item) tea.Cmd {
+	return func() tea.Msg {
+		client, err := instapaper.NewClient()
+		if err != nil {
+			log.Fatalf("Failed to init Instapaper client: %v\n", err)
+		}
+
+		text, err := client.GetBookmarkText(item.ID())
+		if err != nil {
+			log.Fatalf("Failed to get item contents: %v\n", err)
+		}
+
+		t, err := html2text.FromString(text)
+		if err != nil {
+			log.Fatalf("Failed to convert html to text: %v\n", err)
+		}
+
+		out, err := glamour.Render(t, "dark")
+		if err != nil {
+			log.Fatalf("Failed to render with glamour: %v\n", err)
+		}
+		item.SetText(out)
+		return contentMsg(content{
+			index: index,
+			item:  item,
+		})
+	}
+}
+
 func (m mainModel) Init() tea.Cmd {
 	// return multiple commands
 	return tea.Batch(m.spinner.Tick, initList())
@@ -128,7 +164,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// we can initialize the viewport. The initial dimensions come in
 			// quickly, though asynchronously, which is why we wait for them
 			// here.
-			m.viewport = viewport.New(msg.Width-h-100, msg.Height-v-10)
+			m.viewport = viewport.New(msg.Width-h-65, msg.Height-v-10)
 			m.viewport.YPosition = v - 10
 			m.viewport.HighPerformanceRendering = false
 			m.viewport.SetContent("Loading...")
@@ -140,7 +176,7 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Render the viewport one line below the header.
 			m.viewport.YPosition = v - 10 + 1
 		} else {
-			m.viewport.Width = msg.Width - h - 100
+			m.viewport.Width = msg.Width - h - 65
 			m.viewport.Height = msg.Height - v - 10
 		}
 	case tea.KeyMsg:
@@ -150,21 +186,13 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			// toggle view
 			if m.state == listView {
-				m.state = spinnerView
+				m.state = textView
 			} else {
 				m.state = listView
 			}
-		case "n":
-			if m.state == spinnerView {
-				m.Next()
-				m.resetSpinner()
-				cmds = append(cmds, m.spinner.Tick)
-			}
 		}
 		switch m.state {
-		case spinnerView:
-			// m.spinner, cmd = m.spinner.Update(msg)
-			// cmds = append(cmds, cmd)
+		case textView:
 			m.viewport, cmd = m.viewport.Update(msg)
 			cmds = append(cmds, cmd)
 		case listView:
@@ -174,31 +202,12 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.list.Items()) > 0 {
 				i := m.list.SelectedItem().(item)
 				if len(i.Text()) == 0 {
-					client, err := instapaper.NewClient()
-					if err != nil {
-						log.Fatalf("Failed to init Instapaper client: %v\n", err)
-					}
-
-					text, err := client.GetBookmarkText(i.ID())
-					if err != nil {
-						log.Fatalf("Failed to get item contents: %v\n", err)
-					}
-
-					t, err := html2text.FromString(text)
-					if err != nil {
-						log.Fatalf("Failed to convert html to text: %v\n", err)
-					}
-
-					out, err := glamour.Render(t, "dark")
-					if err != nil {
-						log.Fatalf("Failed to render with glamour: %v\n", err)
-					}
-
-					i.SetText(out)
-					// // is there a better way or we always have to re-set the item if we modify it?
-					m.list.SetItem(m.list.Index(), i)
+					cmd := setContent(m.list.Index(), i)
+					cmds = append(cmds, cmd)
+					m.viewport.SetContent(fmt.Sprintf("keyMsg: Getting content for item on index %d", m.list.Index()))
+				} else {
+					m.viewport.SetContent(i.Text())
 				}
-				m.viewport.SetContent(i.Text())
 			}
 		}
 	case spinner.TickMsg:
@@ -210,33 +219,19 @@ func (m mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.list.Items()) > 0 {
 			i := m.list.SelectedItem().(item)
 			if len(i.Text()) == 0 {
-				client, err := instapaper.NewClient()
-				if err != nil {
-					log.Fatalf("Failed to init Instapaper client: %v\n", err)
-				}
-
-				text, err := client.GetBookmarkText(i.ID())
-				if err != nil {
-					log.Fatalf("Failed to get item contents: %v\n", err)
-				}
-
-				t, err := html2text.FromString(text)
-				if err != nil {
-					log.Fatalf("Failed to convert html to text: %v\n", err)
-				}
-
-				out, err := glamour.Render(t, "dark")
-				if err != nil {
-					log.Fatalf("Failed to render with glamour: %v\n", err)
-				}
-
-				i.SetText(out)
-				// // is there a better way or we always have to re-set the item if we modify it?
-				m.list.SetItem(m.list.Index(), i)
+				cmd := setContent(m.list.Index(), i)
+				cmds = append(cmds, cmd)
+				m.viewport.SetContent(fmt.Sprintf("initListMsg: Getting content for item on index %d", m.list.Index()))
+			} else {
+				m.viewport.SetContent(i.Text())
 			}
-			m.viewport.SetContent(i.Text())
 		}
+	case contentMsg:
+		cmd := m.list.SetItem(msg.index, msg.item)
+		cmds = append(cmds, cmd)
+		m.viewport.SetContent(msg.item.Text())
 	}
+
 	return m, tea.Batch(cmds...)
 }
 
@@ -312,11 +307,11 @@ func (m *mainModel) Next() {
 	}
 }
 
-func (m *mainModel) resetSpinner() {
-	m.spinner = spinner.New()
-	m.spinner.Style = spinnerStyle
-	m.spinner.Spinner = spinners[m.index]
-}
+// func (m *mainModel) resetSpinner() {
+// 	m.spinner = spinner.New()
+// 	m.spinner.Style = spinnerStyle
+// 	m.spinner.Spinner = spinners[m.index]
+// }
 
 func main() {
 	err := godotenv.Load()
