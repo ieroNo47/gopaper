@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 
+	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -15,7 +16,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ieroNo47/gopaper/prototyping/instapaper"
 	"github.com/joho/godotenv"
-	"jaytaylor.com/html2text"
 )
 
 type item struct {
@@ -127,7 +127,8 @@ func setContent(index int, item item) tea.Cmd {
 			log.Fatalf("Failed to get item contents: %v\n", err)
 		}
 
-		t, err := html2text.FromString(text)
+		// t, err := html2text.FromString(text)
+		t, err := htmltomarkdown.ConvertString(text)
 		if err != nil {
 			log.Fatalf("Failed to convert html to text: %v\n", err)
 		}
