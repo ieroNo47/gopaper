@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log"
 
+	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/charmbracelet/glamour"
 	"github.com/ieroNo47/gopaper/prototyping/instapaper"
 	"github.com/joho/godotenv"
-	"jaytaylor.com/html2text"
 )
 
 const bookmarkLimit = 1
@@ -33,7 +33,8 @@ func main() {
 		log.Fatalf("Failed to get bookrmark text: %v\n", err)
 	}
 	// fmt.Printf("Text: %s", text)
-	t, err := html2text.FromString(text)
+	// t, err := html2text.FromString(text)
+	t, err := htmltomarkdown.ConvertString(text)
 	if err != nil {
 		log.Fatalf("Failed to convert html to text: %v\n", err)
 	}
