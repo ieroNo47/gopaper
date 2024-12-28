@@ -6,6 +6,8 @@ import (
 	"log"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -13,7 +15,27 @@ import (
 	"github.com/joho/godotenv"
 )
 
-var docStyle = lipgloss.NewStyle().Margin(1, 2)
+var outerStyle = lipgloss.NewStyle().
+	// top and right margin needs to be 2 to avoid the border cut off issue
+	Margin(2, 2, 0, 0).
+	Padding(0).
+	BorderStyle(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("1")).
+	MarginBackground(lipgloss.Color("1"))
+
+var listStyle = lipgloss.NewStyle().
+	Margin(0).
+	Padding(0, 10, 0, 0).
+	BorderStyle(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("2")).
+	MarginBackground(lipgloss.Color("2"))
+
+var helpStyle = lipgloss.NewStyle().
+	Margin(0).
+	Padding(0).
+	BorderStyle(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("3")).
+	MarginBackground(lipgloss.Color("3"))
 
 type item struct {
 	title, desc string
@@ -41,8 +63,9 @@ func initList() tea.Cmd {
 			for _, tag := range bookmark.Tags {
 				tagNames = append(tagNames, tag.Name)
 			}
-			title := fmt.Sprintf("%s [%s]", bookmark.Title, strings.Join(tagNames, ","))
-			items = append(items, item{title: title, desc: bookmark.Description})
+			title := bookmark.Title
+			description := fmt.Sprintf("%s | %.0f%%", strings.Join(tagNames, ","), bookmark.Progress*100)
+			items = append(items, item{title: title, desc: description})
 		}
 		return initListMsg(items)
 	}
@@ -51,6 +74,15 @@ func initList() tea.Cmd {
 
 type model struct {
 	list list.Model
+	help help.Model
+}
+
+func (m model) FullHelp() [][]key.Binding {
+	return m.list.FullHelp()
+}
+
+func (m model) ShortHelp() []key.Binding {
+	return m.list.ShortHelp()
 }
 
 func (m model) Init() tea.Cmd {
@@ -58,22 +90,71 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	cmds := []tea.Cmd{}
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
 	case tea.WindowSizeMsg:
-		h, v := docStyle.GetFrameSize()
+		// TODO: Find a better way to calculate the sizes for a responsive layout
+		// to properly make the outer border fit the terminal window we need to subtract the
+		// border and margin sizes
+		oVertical := outerStyle.GetBorderTopSize() +
+			outerStyle.GetBorderBottomSize() +
+			outerStyle.GetMarginTop() +
+			outerStyle.GetMarginBottom()
+
+		oHorizontal := outerStyle.GetBorderLeftSize() +
+			outerStyle.GetBorderRightSize() +
+			outerStyle.GetMarginLeft() +
+			outerStyle.GetMarginRight()
+
+		outerStyle = outerStyle.Width(msg.Width - oHorizontal).Height(msg.Height - oVertical)
+
+		hH, _ := outerStyle.GetFrameSize()
+		hH -= helpStyle.GetBorderLeftSize() - helpStyle.GetBorderRightSize() - 2
+		helpStyle = helpStyle.Width(msg.Width - hH)
+
+		lH, lV := outerStyle.GetFrameSize()
+		// not sure why we need to subtract an extra 2 here but it works
+		lH -= listStyle.GetBorderLeftSize() - listStyle.GetBorderRightSize() - 2
+		// not sure why we need to subtract an extra 5 here but it works. Maybe because the height is not set?
+		lV -= listStyle.GetBorderTopSize() -
+			listStyle.GetBorderBottomSize() -
+			helpStyle.GetHeight() -
+			helpStyle.GetVerticalFrameSize() - 5
+
+		listStyle = listStyle.Width(msg.Width - lH).Height(msg.Height - lV)
+
+		h := outerStyle.GetHorizontalFrameSize() + listStyle.GetHorizontalFrameSize()
+		v := outerStyle.GetVerticalFrameSize() + listStyle.GetVerticalFrameSize() + helpStyle.GetVerticalFrameSize() + 5
 		m.list.SetSize(msg.Width-h, msg.Height-v)
+	case initListMsg:
+		cmd = m.list.SetItems(msg)
+		cmds = append(cmds, cmd)
 	}
-	var cmd tea.Cmd
+
 	m.list, cmd = m.list.Update(msg)
-	return m, cmd
+	cmds = append(cmds, cmd)
+	m.help = m.list.Help
+	return m, tea.Batch(cmds...)
 }
 
 func (m model) View() string {
-	return docStyle.Render(m.list.View())
+	// return listStyle.Render(m.list.View())
+	view := lipgloss.JoinVertical(
+		lipgloss.Bottom,
+		listStyle.Render(m.list.View()),
+		helpStyle.Render(m.help.View(m)),
+	)
+	// view := lipgloss.JoinVertical(
+	// 	lipgloss.Center,
+	// 	listStyle.Render("lorem ipsum"),
+	// 	helpStyle.Render("sit amet consectetur adipiscing elit"),
+	// )
+	return outerStyle.Render(view)
 }
 
 func main() {
@@ -82,26 +163,11 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
-	client, err := instapaper.NewClient()
-	if err != nil {
-		log.Fatalf("Failed to init Instapaper client: %v\n", err)
-	}
-	bookmarks, err := client.GetBookmarks(15)
-	if err != nil {
-		log.Fatalf("Failed to get bookmarks: %v\n", err)
-	}
-	items := []list.Item{}
-	for _, bookmark := range bookmarks {
-		tagNames := []string{}
-		for _, tag := range bookmark.Tags {
-			tagNames = append(tagNames, tag.Name)
-		}
-		title := fmt.Sprintf("%s [%s]", bookmark.Title, strings.Join(tagNames, ","))
-		items = append(items, item{title: title, desc: bookmark.Description})
-	}
-	m := model{list: list.New(items, list.NewDefaultDelegate(), 0, 0)}
-	m.list.Title = "My Instapaper list"
-
+	m := model{list: list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0), help: help.New()}
+	// m.list.Title = "My Instapaper list"
+	m.list.SetShowTitle(false)
+	m.list.SetShowStatusBar(false)
+	m.list.SetShowHelp(false)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
