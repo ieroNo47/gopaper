@@ -30,20 +30,30 @@ var listStyle = lipgloss.NewStyle().
 	BorderForeground(lipgloss.Color("2")).
 	MarginBackground(lipgloss.Color("2"))
 
-var helpStyle = lipgloss.NewStyle().
+var tagsStyle = lipgloss.NewStyle().
 	Margin(0).
 	Padding(0).
 	BorderStyle(lipgloss.RoundedBorder()).
 	BorderForeground(lipgloss.Color("3")).
 	MarginBackground(lipgloss.Color("3"))
 
+var helpStyle = lipgloss.NewStyle().
+	Margin(0).
+	Padding(0).
+	BorderStyle(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("4")).
+	MarginBackground(lipgloss.Color("4"))
+
 type item struct {
-	title, desc string
+	title string
+	desc  string
+	tags  []instapaper.Tag
 }
 
-func (i item) Title() string       { return i.title }
-func (i item) Description() string { return i.desc }
-func (i item) FilterValue() string { return i.title }
+func (i item) Title() string          { return i.title }
+func (i item) Description() string    { return i.desc }
+func (i item) FilterValue() string    { return i.title }
+func (i item) Tags() []instapaper.Tag { return i.tags }
 
 type initListMsg []list.Item
 
@@ -53,7 +63,7 @@ func initList() tea.Cmd {
 		if err != nil {
 			log.Fatalf("Failed to init Instapaper client: %v\n", err)
 		}
-		bookmarks, err := client.GetBookmarks(15)
+		bookmarks, err := client.GetBookmarks(50)
 		if err != nil {
 			log.Fatalf("Failed to get bookmarks: %v\n", err)
 		}
@@ -65,7 +75,7 @@ func initList() tea.Cmd {
 			}
 			title := bookmark.Title
 			description := fmt.Sprintf("%s | %.0f%%", strings.Join(tagNames, ","), bookmark.Progress*100)
-			items = append(items, item{title: title, desc: description})
+			items = append(items, item{title: title, desc: description, tags: bookmark.Tags})
 		}
 		return initListMsg(items)
 	}
@@ -101,6 +111,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// TODO: Find a better way to calculate the sizes for a responsive layout
 		// to properly make the outer border fit the terminal window we need to subtract the
 		// border and margin sizes
+		// TODO: the outer style is mostly for testing and to learn how lipgloss works, can be removed later to save some screen space
+		// h is for Horizontal, not height
 		oVertical := outerStyle.GetBorderTopSize() +
 			outerStyle.GetBorderBottomSize() +
 			outerStyle.GetMarginTop() +
@@ -126,11 +138,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			helpStyle.GetHeight() -
 			helpStyle.GetVerticalFrameSize() - 5
 
-		listStyle = listStyle.Width(msg.Width - lH).Height(msg.Height - lV)
+		// listStyle = listStyle.Width(msg.Width - lH).Height(msg.Height - lV)
+		// h := outerStyle.GetHorizontalFrameSize() + listStyle.GetHorizontalFrameSize()
+		// v := outerStyle.GetVerticalFrameSize() + listStyle.GetVerticalFrameSize() + helpStyle.GetVerticalFrameSize() + 5
+		// // if we subtract an extra 2 or more from the width, the list contents are truncated more gracefully without
+		// // wrapping to the next line and breaking the layout
+		// m.list.SetSize(msg.Width-h-2, msg.Height-v)
 
-		h := outerStyle.GetHorizontalFrameSize() + listStyle.GetHorizontalFrameSize()
+		// tags view wip
+		w := msg.Width - lH - 2
+		listStyle = listStyle.Width((w * 2) / 3).Height(msg.Height - lV)
+		tagsStyle = tagsStyle.Width(w / 3).Height(msg.Height - lV)
 		v := outerStyle.GetVerticalFrameSize() + listStyle.GetVerticalFrameSize() + helpStyle.GetVerticalFrameSize() + 5
-		m.list.SetSize(msg.Width-h, msg.Height-v)
+		m.list.SetSize((w*2/3)-10, msg.Height-v)
 	case initListMsg:
 		cmd = m.list.SetItems(msg)
 		cmds = append(cmds, cmd)
@@ -144,9 +164,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	// return listStyle.Render(m.list.View())
+	listWithTagsView := lipgloss.JoinHorizontal(lipgloss.Bottom, listStyle.Render(m.list.View()), tagsStyle.Render(fmt.Sprintf("%v", m.getTags())))
 	view := lipgloss.JoinVertical(
 		lipgloss.Bottom,
-		listStyle.Render(m.list.View()),
+		listWithTagsView,
 		helpStyle.Render(m.help.View(m)),
 	)
 	// view := lipgloss.JoinVertical(
@@ -157,6 +178,18 @@ func (m model) View() string {
 	return outerStyle.Render(view)
 }
 
+// misc helper functions
+func (m model) getTags() map[string]int {
+	tags := map[string]int{}
+	for _, i := range m.list.Items() {
+		for _, tag := range i.(item).Tags() {
+			tags[tag.Name]++
+		}
+	}
+	return tags
+}
+
+// main function, inits and runs the tea
 func main() {
 	err := godotenv.Load()
 	if err != nil {
