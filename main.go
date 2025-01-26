@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ieroNo47/gopaper/internal/instapaper"
@@ -83,8 +84,9 @@ func initList() tea.Cmd {
 }
 
 type model struct {
-	list list.Model
-	help help.Model
+	list  list.Model
+	table table.Model
+	help  help.Model
 }
 
 func (m model) FullHelp() [][]key.Binding {
@@ -151,9 +153,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		tagsStyle = tagsStyle.Width(w / 3).Height(msg.Height - lV)
 		v := outerStyle.GetVerticalFrameSize() + listStyle.GetVerticalFrameSize() + helpStyle.GetVerticalFrameSize() + 5
 		m.list.SetSize((w*2/3)-10, msg.Height-v)
+		m.table.SetWidth((w / 3) - 5)
+		m.table.SetHeight(msg.Height - v - 1)
+		m.table.SetColumns([]table.Column{
+			{Width: (w / 3) - 5},
+		})
 	case initListMsg:
 		cmd = m.list.SetItems(msg)
 		cmds = append(cmds, cmd)
+		m.table.SetRows(m.getTagRows())
 	}
 
 	m.list, cmd = m.list.Update(msg)
@@ -164,21 +172,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	// return listStyle.Render(m.list.View())
-	listWithTagsView := lipgloss.JoinHorizontal(lipgloss.Bottom, listStyle.Render(m.list.View()), tagsStyle.Render(fmt.Sprintf("%v", m.getTags())))
+	listWithTagsView := lipgloss.JoinHorizontal(
+		lipgloss.Bottom,
+		listStyle.Render(m.list.View()),
+		tagsStyle.Render(m.table.View()),
+	)
 	view := lipgloss.JoinVertical(
 		lipgloss.Bottom,
 		listWithTagsView,
 		helpStyle.Render(m.help.View(m)),
 	)
-	// view := lipgloss.JoinVertical(
-	// 	lipgloss.Center,
-	// 	listStyle.Render("lorem ipsum"),
-	// 	helpStyle.Render("sit amet consectetur adipiscing elit"),
-	// )
 	return outerStyle.Render(view)
 }
 
 // misc helper functions
+
+// getTags returns a map of tags and their counts from the list of downloaded bookmarks
+// the current version of the instapaper api does not support fetching tags
 func (m model) getTags() map[string]int {
 	tags := map[string]int{}
 	for _, i := range m.list.Items() {
@@ -189,6 +199,16 @@ func (m model) getTags() map[string]int {
 	return tags
 }
 
+func (m model) getTagRows() []table.Row {
+	tags := m.getTags()
+	items := []table.Row{}
+	for tag, count := range tags {
+		items = append(items, table.Row{fmt.Sprintf("(%d) %s", count, tag)})
+	}
+
+	return items
+}
+
 // main function, inits and runs the tea
 func main() {
 	err := godotenv.Load()
@@ -196,7 +216,19 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
-	m := model{list: list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0), help: help.New()}
+	columns := []table.Column{
+		{Width: 10},
+	}
+
+	m := model{
+		list: list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
+		help: help.New(),
+		table: table.New(
+			table.WithColumns(columns),
+			table.WithHeight(5),
+			table.WithRows(
+				[]table.Row{{"Loading..."}})),
+	}
 	// m.list.Title = "My Instapaper list"
 	m.list.SetShowTitle(false)
 	m.list.SetShowStatusBar(false)
