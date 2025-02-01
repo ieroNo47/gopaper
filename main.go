@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -14,6 +15,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ieroNo47/gopaper/internal/instapaper"
 	"github.com/joho/godotenv"
+)
+
+type sessionState uint
+
+const (
+	bookmarksView sessionState = iota
+	tagsView
 )
 
 var outerStyle = lipgloss.NewStyle().
@@ -28,15 +36,15 @@ var listStyle = lipgloss.NewStyle().
 	Margin(0).
 	Padding(0, 10, 0, 0).
 	BorderStyle(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("2")).
-	MarginBackground(lipgloss.Color("2"))
+	BorderForeground(lipgloss.Color("5")).
+	MarginBackground(lipgloss.Color("5"))
 
 var tagsStyle = lipgloss.NewStyle().
 	Margin(0).
 	Padding(0).
 	BorderStyle(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("3")).
-	MarginBackground(lipgloss.Color("3"))
+	BorderForeground(lipgloss.Color("0")).
+	MarginBackground(lipgloss.Color("0"))
 
 var helpStyle = lipgloss.NewStyle().
 	Margin(0).
@@ -87,14 +95,23 @@ type model struct {
 	list  list.Model
 	table table.Model
 	help  help.Model
+	state sessionState
 }
 
 func (m model) FullHelp() [][]key.Binding {
-	return m.list.FullHelp()
+	if m.state == bookmarksView {
+		return m.list.FullHelp()
+	} else {
+		return m.table.KeyMap.FullHelp()
+	}
 }
 
 func (m model) ShortHelp() []key.Binding {
-	return m.list.ShortHelp()
+	if m.state == bookmarksView {
+		return m.list.ShortHelp()
+	} else {
+		return m.table.KeyMap.ShortHelp()
+	}
 }
 
 func (m model) Init() tea.Cmd {
@@ -106,8 +123,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds := []tea.Cmd{}
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" {
+		switch msg.String() {
+		case "ctrl+c", "q":
 			return m, tea.Quit
+		case "tab":
+			// switch focus between bookmarks and tags view
+			if m.state == bookmarksView {
+				m.state = tagsView
+			} else {
+				m.state = bookmarksView
+			}
+		}
+		// pass msg to the current view
+		switch m.state {
+		case bookmarksView:
+			m.list, cmd = m.list.Update(msg)
+			cmds = append(cmds, cmd)
+			listStyle = listStyle.BorderForeground(lipgloss.Color("5"))
+			tagsStyle = tagsStyle.BorderForeground(lipgloss.Color("0"))
+		case tagsView:
+			m.table, cmd = m.table.Update(msg)
+			cmds = append(cmds, cmd)
+			listStyle = listStyle.BorderForeground(lipgloss.Color("0"))
+			tagsStyle = tagsStyle.BorderForeground(lipgloss.Color("5"))
 		}
 	case tea.WindowSizeMsg:
 		// TODO: Find a better way to calculate the sizes for a responsive layout
@@ -164,9 +202,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetRows(m.getTagRows())
 	}
 
-	m.list, cmd = m.list.Update(msg)
-	cmds = append(cmds, cmd)
-	m.help = m.list.Help
 	return m, tea.Batch(cmds...)
 }
 
@@ -199,11 +234,25 @@ func (m model) getTags() map[string]int {
 	return tags
 }
 
+// todo: cleanup and move elsewhere
+type tagKeyValue struct {
+	key   string
+	value int
+}
+
 func (m model) getTagRows() []table.Row {
 	tags := m.getTags()
+	// sort by count
+	kv := make([]tagKeyValue, 0, len(tags))
+	for k, v := range tags {
+		kv = append(kv, tagKeyValue{k, v})
+	}
+	sort.Slice(kv, func(i, j int) bool {
+		return kv[i].value > kv[j].value
+	})
 	items := []table.Row{}
-	for tag, count := range tags {
-		items = append(items, table.Row{fmt.Sprintf("(%d) %s", count, tag)})
+	for _, tag := range kv {
+		items = append(items, table.Row{fmt.Sprintf("(%d) %s", tag.value, tag.key)})
 	}
 
 	return items
@@ -221,9 +270,11 @@ func main() {
 	}
 
 	m := model{
-		list: list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
-		help: help.New(),
+		state: bookmarksView,
+		list:  list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
+		help:  help.New(),
 		table: table.New(
+			table.WithFocused(true),
 			table.WithColumns(columns),
 			table.WithHeight(5),
 			table.WithRows(
