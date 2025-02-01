@@ -1,6 +1,8 @@
 # gopaper
 An Instapaper TUI client written in Go.
 
+![logo](./logo.png)
+
 ## Usage
 
 Create a `.env` file at the root of the repo.
