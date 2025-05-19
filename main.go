@@ -25,8 +25,8 @@ const (
 )
 
 var outerStyle = lipgloss.NewStyle().
-	// top and right margin needs to be 2 to avoid the border cut off issue
-	Margin(2, 2, 0, 0).
+	// top and right margin can be 0 now, looks like there was a bug that was fixed in the recent version
+	Margin(6, 0, 0, 0).
 	Padding(0).
 	BorderStyle(lipgloss.RoundedBorder()).
 	BorderForeground(lipgloss.Color("1")).
@@ -34,7 +34,7 @@ var outerStyle = lipgloss.NewStyle().
 
 var listStyle = lipgloss.NewStyle().
 	Margin(0).
-	Padding(0, 10, 0, 0).
+	Padding(0, 0, 0, 0).
 	BorderStyle(lipgloss.RoundedBorder()).
 	BorderForeground(lipgloss.Color("5")).
 	MarginBackground(lipgloss.Color("5"))
@@ -53,6 +53,8 @@ var helpStyle = lipgloss.NewStyle().
 	BorderForeground(lipgloss.Color("4")).
 	MarginBackground(lipgloss.Color("4"))
 
+// item is a struct that implements the list.Item interface
+// it represents a single item in the list
 type item struct {
 	title string
 	desc  string
@@ -64,8 +66,11 @@ func (i item) Description() string    { return i.desc }
 func (i item) FilterValue() string    { return i.title }
 func (i item) Tags() []instapaper.Tag { return i.tags }
 
+// initListMsg is a message type for initializing the list
 type initListMsg []list.Item
 
+// initList initializes the list with bookmarks
+// it fetches the bookmarks from the instapaper client and returns a list of items
 func initList() tea.Cmd {
 	return func() tea.Msg {
 		client, err := instapaper.NewClient()
@@ -91,6 +96,7 @@ func initList() tea.Cmd {
 
 }
 
+// model is the main model for the application
 type model struct {
 	list  list.Model
 	table table.Model
@@ -114,14 +120,18 @@ func (m model) ShortHelp() []key.Binding {
 	}
 }
 
+// Init initializes the model
 func (m model) Init() tea.Cmd {
 	return initList()
 }
 
+// Update updates the model based on received messages
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	cmds := []tea.Cmd{}
+
 	switch msg := msg.(type) {
+	// handle a key press
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":
@@ -134,7 +144,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = bookmarksView
 			}
 		}
-		// pass msg to the current view
+		// pass msg to the active view
 		switch m.state {
 		case bookmarksView:
 			m.list, cmd = m.list.Update(msg)
@@ -147,12 +157,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			listStyle = listStyle.BorderForeground(lipgloss.Color("0"))
 			tagsStyle = tagsStyle.BorderForeground(lipgloss.Color("5"))
 		}
+	// handle a window resize event
 	case tea.WindowSizeMsg:
 		// TODO: Find a better way to calculate the sizes for a responsive layout
 		// to properly make the outer border fit the terminal window we need to subtract the
 		// border and margin sizes
 		// TODO: the outer style is mostly for testing and to learn how lipgloss works, can be removed later to save some screen space
 		// h is for Horizontal, not height
+
+		// size of outer vertical and horizontal borders
 		oVertical := outerStyle.GetBorderTopSize() +
 			outerStyle.GetBorderBottomSize() +
 			outerStyle.GetMarginTop() +
@@ -163,20 +176,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			outerStyle.GetMarginLeft() +
 			outerStyle.GetMarginRight()
 
+		// size of the 'outer' parent container adjusted to be the window size - the size of the borders and margins
 		outerStyle = outerStyle.Width(msg.Width - oHorizontal).Height(msg.Height - oVertical)
 
+		// hH = help Horizontal. It is the size of the outer horizontal frame size (border + margin + padding)
+		// and the help style horizontal border size
+		// we subtract this from the width of the window to get the usable width for our help msg container
 		hH, _ := outerStyle.GetFrameSize()
 		hH -= helpStyle.GetBorderLeftSize() - helpStyle.GetBorderRightSize() - 2
 		helpStyle = helpStyle.Width(msg.Width - hH)
 
+		// lH = list Horizontal
+		// lV = list Vertical
 		lH, lV := outerStyle.GetFrameSize()
 		// not sure why we need to subtract an extra 2 here but it works
 		lH -= listStyle.GetBorderLeftSize() - listStyle.GetBorderRightSize() - 2
-		// not sure why we need to subtract an extra 5 here but it works. Maybe because the height is not set?
 		lV -= listStyle.GetBorderTopSize() -
 			listStyle.GetBorderBottomSize() -
 			helpStyle.GetHeight() -
-			helpStyle.GetVerticalFrameSize() - 5
+			helpStyle.GetVerticalFrameSize()
 
 		// listStyle = listStyle.Width(msg.Width - lH).Height(msg.Height - lV)
 		// h := outerStyle.GetHorizontalFrameSize() + listStyle.GetHorizontalFrameSize()
@@ -188,14 +206,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// tags view wip
 		w := msg.Width - lH - 2
 		listStyle = listStyle.Width((w * 2) / 3).Height(msg.Height - lV)
-		tagsStyle = tagsStyle.Width(w / 3).Height(msg.Height - lV)
-		v := outerStyle.GetVerticalFrameSize() + listStyle.GetVerticalFrameSize() + helpStyle.GetVerticalFrameSize() + 5
+		tagsStyle = tagsStyle.Width(w / 3).Height(msg.Height - lV + 3)
+		v := outerStyle.GetVerticalFrameSize() + listStyle.GetVerticalFrameSize() + helpStyle.GetVerticalFrameSize() - 5
 		m.list.SetSize((w*2/3)-10, msg.Height-v)
 		m.table.SetWidth((w / 3) - 5)
 		m.table.SetHeight(msg.Height - v - 1)
 		m.table.SetColumns([]table.Column{
 			{Width: (w / 3) - 5},
 		})
+	// handle initListMsg event, which is sent when the list is initialized
 	case initListMsg:
 		cmd = m.list.SetItems(msg)
 		cmds = append(cmds, cmd)
@@ -205,6 +224,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// View renders the model to a string to be displayed in the terminal
 func (m model) View() string {
 	// return listStyle.Render(m.list.View())
 	listWithTagsView := lipgloss.JoinHorizontal(
@@ -220,7 +240,7 @@ func (m model) View() string {
 	return outerStyle.Render(view)
 }
 
-// misc helper functions
+// ####### misc helper functions #######
 
 // getTags returns a map of tags and their counts from the list of downloaded bookmarks
 // the current version of the instapaper api does not support fetching tags
@@ -240,6 +260,7 @@ type tagKeyValue struct {
 	value int
 }
 
+// getTagRows sorts the tags by count and returns the result as a list of table rows
 func (m model) getTagRows() []table.Row {
 	tags := m.getTags()
 	// sort by count
