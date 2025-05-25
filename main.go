@@ -4,7 +4,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -15,6 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ieroNo47/gopaper/internal/instapaper"
 	"github.com/joho/godotenv"
+	"golang.org/x/term"
 )
 
 type sessionState uint
@@ -98,10 +101,13 @@ func initList() tea.Cmd {
 
 // model is the main model for the application
 type model struct {
-	list  list.Model
-	table table.Model
-	help  help.Model
-	state sessionState
+	list           *list.Model
+	unfilteredList list.Model
+	filteredList   list.Model
+	table          table.Model
+	help           help.Model
+	state          sessionState
+	log            *log.Logger
 }
 
 func (m model) FullHelp() [][]key.Binding {
@@ -120,13 +126,45 @@ func (m model) ShortHelp() []key.Binding {
 	}
 }
 
+type filterByTagMsg string
+
+func (m model) filterByTag(tag string) tea.Cmd {
+	return func() tea.Msg {
+		// mark tag as selected
+		cursor := m.table.Cursor()
+		rows := m.table.Rows()
+		for i := range rows {
+			if i == cursor {
+				rows[i][0] = "✓"
+			} else {
+				rows[i][0] = " "
+			}
+		}
+		m.table.SetRows(rows)
+		return filterByTagMsg(tag)
+	}
+}
+
+type clearFilterMsg string
+
+func (m model) clearFilter() tea.Cmd {
+	return func() tea.Msg {
+		rows := m.table.Rows()
+		for i := range rows {
+			rows[i][0] = " "
+		}
+		m.table.SetRows(rows)
+		return clearFilterMsg("")
+	}
+}
+
 // Init initializes the model
 func (m model) Init() tea.Cmd {
 	return initList()
 }
 
 // Update updates the model based on received messages
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	cmds := []tea.Cmd{}
 
@@ -143,11 +181,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.state = bookmarksView
 			}
+		case "enter":
+			if m.state == tagsView {
+				row := m.table.SelectedRow()
+				var cmd tea.Cmd
+				if row[0] == "✓" { // better way to check if tag is selected?
+					// clear filter if tag is already selected
+					cmd = m.clearFilter()
+				} else {
+					// filter by tag if it is not selected
+					tag := row[2]
+					cmd = m.filterByTag(tag)
+				}
+				cmds = append(cmds, cmd)
+			}
 		}
+
 		// pass msg to the active view
 		switch m.state {
 		case bookmarksView:
-			m.list, cmd = m.list.Update(msg)
+			*m.list, cmd = m.list.Update(msg)
 			cmds = append(cmds, cmd)
 			listStyle = listStyle.BorderForeground(lipgloss.Color("5"))
 			tagsStyle = tagsStyle.BorderForeground(lipgloss.Color("0"))
@@ -212,13 +265,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetWidth((w / 3) - 5)
 		m.table.SetHeight(msg.Height - v - 1)
 		m.table.SetColumns([]table.Column{
-			{Width: (w / 3) - 5},
+			{Width: 1},
+			{Width: 3},
+			{Width: (w / 3) - 8},
 		})
 	// handle initListMsg event, which is sent when the list is initialized
 	case initListMsg:
 		cmd = m.list.SetItems(msg)
 		cmds = append(cmds, cmd)
 		m.table.SetRows(m.getTagRows())
+	// handle filterByTagMsg event, which is sent when a tag is selected
+	case filterByTagMsg:
+		// filter the list by the selected tag
+		// should some of this be in filterByTag instead?
+		tag := string(msg)
+		filteredItems := []list.Item{}
+		for _, i := range m.unfilteredList.Items() {
+			// check if tag is in the item's tags
+			for _, t := range i.(item).Tags() {
+				if t.Name == tag {
+					filteredItems = append(filteredItems, i)
+				}
+			}
+		}
+		// switch pointer to filtered list and update it with items matching the tag
+		m.list = &m.filteredList
+		cmd := m.list.SetItems(filteredItems)
+		cmds = append(cmds, cmd)
+		cmd = m.forceRedraw()
+		cmds = append(cmds, cmd)
+	case clearFilterMsg:
+		// switch back to the unfiltered list
+		m.list = &m.unfilteredList
+		cmd := m.forceRedraw()
+		cmds = append(cmds, cmd)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -273,10 +353,28 @@ func (m model) getTagRows() []table.Row {
 	})
 	items := []table.Row{}
 	for _, tag := range kv {
-		items = append(items, table.Row{fmt.Sprintf("(%d) %s", tag.value, tag.key)})
+		items = append(items, table.Row{
+			" ",
+			strconv.Itoa(tag.value),
+			tag.key})
 	}
 
 	return items
+}
+
+func (m model) forceRedraw() tea.Cmd {
+	w, h, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		log.Fatalf("Failed to get terminal size: %v\n", err)
+	}
+
+	// Trigger a window resize to force redraw, otherwise content might not be visible when main bookmarks list is filtered
+	return func() tea.Msg {
+		return tea.WindowSizeMsg{
+			Width:  w,
+			Height: h,
+		}
+	}
 }
 
 // main function, inits and runs the tea
@@ -286,26 +384,46 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
+	// Open a log file to write debug messages
+	f, err := os.OpenFile("debug.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+
+	// Set initial tag table column to display loading msg
 	columns := []table.Column{
+		{Width: 1},
+		{Width: 3},
 		{Width: 10},
 	}
 
 	m := model{
 		state: bookmarksView,
-		list:  list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
-		help:  help.New(),
+		// two separate lists, unfiltered will have all bookmarks
+		// filtered will be used to display bookmarks filtered by tag or other state like in progress, archived, etc.
+		unfilteredList: list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
+		filteredList:   list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0),
+		help:           help.New(),
 		table: table.New(
 			table.WithFocused(true),
 			table.WithColumns(columns),
 			table.WithHeight(5),
 			table.WithRows(
-				[]table.Row{{"Loading..."}})),
+				[]table.Row{{" ", " ", "Loading..."}})),
+		log: log.New(f, "DEBUG: ", log.Ldate|log.Ltime|log.Lshortfile),
 	}
-	// m.list.Title = "My Instapaper list"
-	m.list.SetShowTitle(false)
-	m.list.SetShowStatusBar(false)
-	m.list.SetShowHelp(false)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+
+	m.filteredList.SetShowTitle(false)
+	m.filteredList.SetShowStatusBar(false)
+	m.filteredList.SetShowHelp(false)
+	m.unfilteredList.SetShowTitle(false)
+	m.unfilteredList.SetShowStatusBar(false)
+	m.unfilteredList.SetShowHelp(false)
+	// set the initial list to be the unfiltered list
+	m.list = &m.unfilteredList
+	// pass m as pointer because we changed Update to have a pointer receiver
+	p := tea.NewProgram(&m, tea.WithAltScreen())
 
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("Error: %v\n", err)
