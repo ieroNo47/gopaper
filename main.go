@@ -28,7 +28,7 @@ const (
 )
 
 var outerStyle = lipgloss.NewStyle().
-	// top and right margin can be 0 now, looks like there was a bug that was fixed in the recent version
+	// top margin needs to be 6 to avoid cut off issues, not sure why
 	Margin(6, 0, 0, 0).
 	Padding(0).
 	BorderStyle(lipgloss.RoundedBorder()).
@@ -126,8 +126,10 @@ func (m model) ShortHelp() []key.Binding {
 	}
 }
 
+// filterByTagMsg is a message type for filtering the list by tag
 type filterByTagMsg string
 
+// filterByTag marks the selected tag in the table and returns a command to filter the list by that tag
 func (m model) filterByTag(tag string) tea.Cmd {
 	return func() tea.Msg {
 		// mark tag as selected
@@ -145,8 +147,10 @@ func (m model) filterByTag(tag string) tea.Cmd {
 	}
 }
 
+// clearFilterMsg is a message type for clearing the filter
 type clearFilterMsg string
 
+// clearFilter clears the tag selection and returns a command to clear the filter
 func (m model) clearFilter() tea.Cmd {
 	return func() tea.Msg {
 		rows := m.table.Rows()
@@ -362,13 +366,14 @@ func (m model) getTagRows() []table.Row {
 	return items
 }
 
+// forceRedraw sends a window size message to force a recalculation of the layout
+// this is needed to ensure that the content is visible when the main bookmarks list is filtered
 func (m model) forceRedraw() tea.Cmd {
 	w, h, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
 		log.Fatalf("Failed to get terminal size: %v\n", err)
 	}
 
-	// Trigger a window resize to force redraw, otherwise content might not be visible when main bookmarks list is filtered
 	return func() tea.Msg {
 		return tea.WindowSizeMsg{
 			Width:  w,
